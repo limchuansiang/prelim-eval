@@ -1,0 +1,507 @@
+#########################################
+1.1 Async Programming & Event Loop
+#########################################
+
+function createScheduler(N) {
+  const timestamps = [];
+
+  return function schedule(fn, delay) {
+    setTimeout(function tryRun() {
+      const now = Date.now();
+
+      // Remove timestamps older than 1 second
+      while (timestamps.length && now - timestamps[0] >= 1000) {
+        timestamps.shift();
+      }
+
+      if (timestamps.length < N) {
+        timestamps.push(now);
+        fn();       // Allowed: under the rate limit
+      } else {
+        setTimeout(tryRun, 10);     // Retry later if over the limit
+      }
+    }, delay);
+  };
+}
+
+
+
+#########################################
+1.2 Required Keys Utility Type
+#########################################
+
+const requiredKeys = ['requiredKey1', 'requiredKey2'];
+
+function ensureRequiredKeys(obj, requiredKeys) {
+  const missingKeys = [];
+
+  // Check if req keys present
+  requiredKeys.forEach((key) => {
+    if (obj[key] === undefined) {
+      missingKeys.push(key);
+    }
+  });
+
+  // If required keys missing, throw error
+  if (missingKeys.length > 0) {
+    throw new Error(`Missing required keys: ${missingKeys.join(', ')}`);
+  }
+
+  return obj;
+}
+
+
+
+#########################################
+1.3 Function Composition & Closures
+#########################################
+
+function compose(fns) {
+  return async function(initialValue) {
+    let result = initialValue;
+
+    for (let fn of fns.reverse()) {
+      result = await fn(result);    // await ensures previous fn is completed
+    }
+
+    return result;
+  };
+}
+
+
+
+#########################################
+2.1 Change Detection, OnPush & Lifecycle Hooks
+#########################################
+
+import { Component, Input, ChangeDetectionStrategy, OnChanges, SimpleChanges } from '@angular/core';
+
+@Component({
+  selector: 'app-root',
+  template: `
+    <div>
+      <button (click)="changeChildData()">Change Data</button>
+      <ul><li *ngFor="let item of items; trackBy: trackById">{{ item.name }}</li></ul>
+      <app-child [data]="parentData"></app-child>
+    </div>
+  `,
+  styleUrls: ['./app.component.scss']
+})
+export class AppComponent {
+  parentData = { name: 'Initial Value' };
+  items = [{ id: 1, name: 'Item 1' }, { id: 2, name: 'Item 2' }];
+
+  // Data passed to child
+  changeChildData() {
+    this.parentData = { name: 'Updated Value' }; 
+  }
+
+  // trackBy for efficient list
+  trackById(index: number, item: any): number {
+    return item.id;
+  }
+}
+
+// Child Component with OnPush
+@Component({
+  selector: 'app-child',
+  template: `<p>Child Data: {{ data?.name }}</p>`,
+  changeDetection: ChangeDetectionStrategy.OnPush
+})
+export class ChildComponent implements OnChanges {
+  @Input() data: any;
+
+  ngOnChanges(changes: SimpleChanges): void {
+    console.log('Child ngOnChanges:', changes);
+  }
+}
+
+
+
+#########################################
+2.2 NgRx (or NGXS) State Handling
+#########################################
+
+// using NgRx
+
+import { createAction, createReducer, on, props, createFeatureSelector, createSelector } from '@ngrx/store';
+
+export interface CartItem {
+  id: string;
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+export interface CartState {
+  items: CartItem[];
+}
+
+export const initialState: CartState = {
+  items: [],
+};
+
+export const addItem = createAction('[Cart] Add Item', props<{ item: CartItem }>());
+export const updateItem = createAction('[Cart] Update Item', props<{ item: CartItem }>());
+export const removeItem = createAction('[Cart] Remove Item', props<{ itemId: string }>());
+export const loadCart = createAction('[Cart] Load Cart', props<{ items: CartItem[] }>());
+
+export const cartReducer = createReducer(
+  initialState,
+
+  on(loadCart, (_, { items }) => ({ items })),
+
+  on(addItem, (state, { item }) => ({
+    items: state.items.some(i => i.id === item.id)
+      ? state.items.map(i => i.id === item.id ? { ...i, quantity: i.quantity + item.quantity } : i)
+      : [...state.items, item]
+  })),
+
+  on(updateItem, (state, { item }) => ({
+    items: state.items.map(i => (i.id === item.id ? item : i))
+  })),
+
+  on(removeItem, (state, { itemId }) => ({
+    items: state.items.filter(i => i.id !== itemId)
+  }))
+);
+
+const selectCart = createFeatureSelector<CartState>('cart');
+
+export const selectCartItems = createSelector(selectCart, (state) => state.items);
+export const selectTotalPrice = createSelector(selectCartItems, (items) => items.reduce((sum, item) => sum + item.price * item.quantity, 0));
+export const selectTotalCount = createSelector(selectCartItems, (items) => items.reduce((sum, item) => sum + item.quantity, 0));
+
+
+
+#########################################
+3.1 Custom Hooks & useMemo/useCallback
+#########################################
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+
+const useFetchWithCache = (url) => {
+  const cache = useRef({}); // Cache data
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // useCallback to memorize
+  const fetchData = useCallback(async (url) => {
+    // Check if data is already in cache
+    if (cache.current[url]) {
+      setData(cache.current[url]);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(url);
+      const result = await response.json();
+      
+      // Cache result
+      cache.current[url] = result;
+      setData(result);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // useMemo to trigger fetchData only when URL changes
+  useMemo(() => {
+    if (url) {
+      fetchData(url);
+    }
+  }, [url, fetchData]);
+
+  return { data, loading, error };
+};
+
+export default useFetchWithCache;
+
+
+
+#########################################
+3.2 Performance Optimization & Virtualized Lists
+#########################################
+
+import React, { useCallback } from 'react';
+import { FixedSizeList as List } from 'react-window';
+
+// Memoized list item component
+const ListItem = React.memo(({ index, style }) => (
+  <div style={style}>Item #{index + 1}</div>
+));
+
+const VirtualizedList = () => {
+  const renderItem = useCallback(({ index, style }) => (
+    <ListItem index={index} style={style} />
+  ), []);
+
+  return (
+    <List
+      height={400}
+      itemCount={10000}
+      itemSize={35}
+      width={300}
+    >
+      {renderItem}
+    </List>
+  );
+};
+
+export default VirtualizedList;
+
+
+
+#########################################
+3.3 Higher-Order Components (HoC)
+#########################################
+
+import React, { Component } from 'react';
+
+function withErrorBoundary(WrappedComponent, FallbackUI) {
+  return class extends Component {
+    state = {
+      hasError: false,
+    };
+
+    static getDerivedStateFromError() {
+      return { hasError: true };
+    }
+
+    handleRetry = () => {
+      this.setState({ hasError: false });
+    };
+
+    render() {
+      if (this.state.hasError) {
+        return (
+          <div>
+            {FallbackUI ? ( <FallbackUI onRetry={this.handleRetry} /> ) : (
+              <div>
+                <h2>Something went wrong.</h2>
+                <button onClick={this.handleRetry}>Retry</button>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      return <WrappedComponent {...this.props} />;
+    }
+  };
+}
+
+// Fallback UI
+const DefaultFallback = ({ onRetry }) => (
+  <div>
+    <h2>Oops! Something went wrong.</h2>
+    <button onClick={onRetry}>Retry</button>
+  </div>
+);
+
+export default withErrorBoundary;
+export { DefaultFallback };
+
+
+
+#########################################
+4.1 Micro-Frontend Router Strategy
+#########################################
+
+import React, { Suspense } from 'react';
+import { BrowserRouter as Router, Route, Switch } from 'react-router-dom';
+
+// Dynamically import micro-frontends
+const MicroFrontend1 = React.lazy(() => import('microFrontend1/App'));
+const MicroFrontend2 = React.lazy(() => import('microFrontend2/App'));
+
+function App() {
+  return (
+    <Router>
+      <div>
+        <h1>Micro-Frontend Shell</h1>
+        <Suspense fallback={<div>Loading...</div>}>
+          <Switch>
+            <Route path="/app1" component={MicroFrontend1} />
+            <Route path="/app2" component={MicroFrontend2} />
+            <Route exact path="/" render={() => <div>Welcome to the Shell App</div>} />
+          </Switch>
+        </Suspense>
+      </div>
+    </Router>
+  );
+}
+
+export default App;
+
+
+
+#########################################
+4.2 Bundle Optimization & SSR Hydration
+#########################################
+
+//app-routing.module.ts
+import { NgModule } from '@angular/core';
+import { RouterModule, Routes } from '@angular/router';
+import { HomeComponent } from './home/home.component';
+
+const routes: Routes = [
+  { path: '', component: HomeComponent },
+  // Lazy loading
+  { path: 'feature', loadChildren: () => import('./feature/feature.module').then(m => m.FeatureModule) }
+];
+
+@NgModule({
+  imports: [RouterModule.forRoot(routes)],
+  exports: [RouterModule]
+})
+export class AppRoutingModule { }
+
+
+//server.ts
+import 'zone.js/node';
+import { enableProdMode } from '@angular/core';
+import { ngExpressEngine } from '@nguniversal/express-engine';
+import { AppServerModule } from './src/app/app.server.module';
+import * as express from 'express';
+import { join } from 'path';
+
+enableProdMode();
+const app = express();
+const DIST_FOLDER = join(process.cwd(), 'dist/browser');
+
+app.engine('html', ngExpressEngine({
+  bootstrap: AppServerModule
+}));
+
+app.set('view engine', 'html');
+app.set('views', DIST_FOLDER);
+
+app.get('*.*', express.static(DIST_FOLDER, { maxAge: '1y' }));
+
+app.all('*', (req, res) => {
+  res.render('index', { req });
+});
+
+app.listen(4000, () => {
+  console.log(`Node server listening on http://localhost:4000`);
+});
+
+
+
+#########################################
+5.1 Helm Chart for SPA
+#########################################
+
+//values.yaml
+# Frontend SPA config
+image:
+  repository: my-frontend-app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Service config
+service:
+  enabled: true
+  type: ClusterIP
+  port: 80
+
+# Ingress config
+ingress:
+  enabled: true
+  host: my-frontend-app.local
+  path: /
+  annotations: {}
+
+# Extra env vars
+extraEnvVars:
+  - name: API_URL
+    value: "https://api.example.com"
+  - name: NODE_ENV
+    value: "production"
+
+
+//_helpers.tpl
+{{- define "frontend-spa.fullname" -}}
+{{ .Release.Name }}-frontend-spa
+{{- end -}}
+
+{{- define "frontend-spa.name" -}}
+frontend-spa
+{{- end -}}
+
+{{- define "frontend-spa.containerPort" -}}
+80
+{{- end -}}
+
+
+
+#########################################
+5.2 Helm Hooks for Frontend Cache Busting
+#########################################
+
+//post-upgrade-hook.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: post-upgrade-hook
+  annotations:
+    "helm.sh/hook": post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": "hook-succeeded"
+spec:
+  template:
+    spec:
+      containers:
+        - name: cloudflare-aws-cache-purge
+          image: your-image:latest
+          env:
+            - name: CLOUD_FLARE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflare-secret
+                  key: api-token
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-secret
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-secret
+                  key: secret-access-key
+            - name: S3_BUCKET_NAME
+              value: your-s3-bucket-name
+            - name: CLOUDFLARE_ZONE_ID
+              value: your-cloudflare-zone-id
+            - name: CLOUDFLARE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflare-secret
+                  key: api-token
+          command:
+            - /bin/bash
+            - -c
+            - |
+              # Purge cache from Cloudflare
+              if [[ -n "$CLOUDFLARE_ZONE_ID" ]]; then
+                echo "Purging Cloudflare cache..."
+                curl -X DELETE "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/purge_cache" \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                --data '{"purge_everything":true}'
+              fi
+
+              # Optionally update S3 with cache-busted filenames
+              if [[ -n "$S3_BUCKET_NAME" ]]; then
+                echo "Updating S3 website deployment with cache-busted filenames..."
+                aws s3 sync ./dist s3://${S3_BUCKET_NAME}/ --exact-timestamps
+              fi
+      restartPolicy: Never
+  backoffLimit: 1
